@@ -1,0 +1,27 @@
+{
+    "objective": "min",
+    "c": [4, 1, 1, 2],
+    "constraints": [
+        {
+            "coefficients": [2, 1, 0, 1],
+            "type": "<=",
+            "value": 9
+        },
+        {
+            "coefficients": [1, 1, 1, 0],
+            "type": "=",
+            "value": 7
+        },
+        {
+            "coefficients": [0, 0, 1, 1],
+            "type": ">=",
+            "value": 5
+        }
+    ],
+    "variable_bounds": [
+        {"lower": 0, "upper": 10},
+        {"lower": 0, "upper": 10},
+        {"lower": 0, "upper": 10},
+        {"lower": 0, "upper": 10}
+    ]
+}
