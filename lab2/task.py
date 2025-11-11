@@ -1,8 +1,8 @@
-import time
-
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
+import time
 import sympy as sp
+from scipy.optimize import minimize, differential_evolution, shgo
 
 
 class GlobalOptimizer:
@@ -12,8 +12,12 @@ class GlobalOptimizer:
         self.b = b
         self.eps = eps
         self.x = sp.Symbol('x')
-        self.func = sp.sympify(func_str)
-        self.func_numeric = sp.lambdify(self.x, self.func, 'numpy')
+        try:
+            self.func = sp.sympify(func_str)
+            self.func_numeric = sp.lambdify(self.x, self.func, 'numpy')
+        except:
+            # Если sympify не работает, используем численную функцию напрямую
+            self.func_numeric = lambda x: eval(func_str)
         self.L = None
         self.iteration_count = 0
         self.execution_time = 0
@@ -30,8 +34,9 @@ class GlobalOptimizer:
             df = f_values[i + 1] - f_values[i - 1]
             derivatives.append(abs(df / dx) if dx != 0 else 0)
 
-
         self.L = max(derivatives) * 1.2  # Добавляем запас 20%
+        if self.L == 0:
+            self.L = 1.0  # Минимальное значение для избежания деления на ноль
         return self.L
 
     def pijavsky_method(self):
@@ -51,7 +56,7 @@ class GlobalOptimizer:
         while iterations < max_iterations:
             iterations += 1
 
-            # Строим нижнюю огибающую (ломаную)
+            # Сортируем точки по x
             sorted_indices = np.argsort(points)
             points_sorted = [points[i] for i in sorted_indices]
             f_sorted = [f_values[i] for i in sorted_indices]
@@ -65,8 +70,11 @@ class GlobalOptimizer:
                 f1, f2 = f_sorted[i], f_sorted[i + 1]
 
                 # Вычисляем точку пересечения вспомогательных функций
-                candidate = 0.5 * ((f2 - f1) / self.L + x1 + x2)
-                candidate = max(x1, min(candidate, x2))
+                if self.L > 0:
+                    candidate = 0.5 * ((f2 - f1) / self.L + x1 + x2)
+                    candidate = max(x1, min(candidate, x2))
+                else:
+                    candidate = (x1 + x2) / 2
 
                 # Вычисляем потенциал (разность между текущей оценкой и нижней границей)
                 lower_bound = 0.5 * (f1 + f2 - self.L * (x2 - x1))
@@ -149,34 +157,30 @@ class GlobalOptimizer:
 def test_functions():
     """Тестовые функции с несколькими локальными минимумами"""
 
-    # Функция Растригина
-    def rastrigin(x):
-        A = 10
-        return A + x ** 2 - A * np.cos(2 * np.pi * x)
-
-    # Функция Экли
-    def ackley(x):
-        return -20 * np.exp(-0.2 * np.sqrt(0.5 * x ** 2)) - \
-            np.exp(0.5 * np.cos(2 * np.pi * x)) + np.e + 20
-
     test_cases = [
         {
             'name': 'Функция Растригина',
-            'func': '10 + x**2 - 10*cos(2*3.14159*x)',
+            'func': '10 + x**2 - 10*np.cos(2*np.pi*x)',
             'interval': [-5.12, 5.12],
             'description': 'Многоэкстремальная функция с множеством локальных минимумов'
         },
         {
             'name': 'Функция Экли',
-            'func': '-20*exp(-0.2*sqrt(0.5*x**2)) - exp(0.5*cos(2*3.14159*x)) + exp(1) + 20',
+            'func': '-20*np.exp(-0.2*np.sqrt(0.5*x**2)) - np.exp(0.5*np.cos(2*np.pi*x)) + np.e + 20',
             'interval': [-5, 5],
             'description': 'Функция с глубоким глобальным минимумом и множеством локальных'
         },
         {
             'name': 'Синусоидальная функция',
-            'func': 'x + sin(3.14159*x)',
+            'func': 'x + np.sin(np.pi*x)',
             'interval': [0, 4],
             'description': 'Простая функция с несколькими локальными экстремумами'
+        },
+        {
+            'name': 'Функция Химмельблау',
+            'func': '(x**2 + x - 11)**2 + (x + x**2 - 7)**2',
+            'interval': [-5, 5],
+            'description': 'Функция с четырьмя локальными минимумами'
         }
     ]
 
@@ -221,5 +225,126 @@ def demonstrate_optimization():
         plt.show()
 
 
+def compare_methods(func_str, bounds, func_name):
+    """Сравнение различных методов оптимизации"""
+
+    # Создаем числовую функцию для scipy
+    x_sym = sp.Symbol('x')
+    try:
+        func_expr = sp.sympify(func_str)
+        func_numeric = sp.lambdify(x_sym, func_expr, 'numpy')
+    except:
+        func_numeric = lambda x: eval(func_str)
+
+    methods = {
+        'Differential Evolution': lambda: differential_evolution(func_numeric, [bounds]),
+        'SHGO': lambda: shgo(func_numeric, [bounds]),
+        'Brute Force': lambda: minimize(func_numeric, x0=0, bounds=[bounds], method='Nelder-Mead')
+    }
+
+    results = {}
+    times = {}
+
+    print(f"\nСравнение методов для {func_name}:")
+    print("-" * 50)
+
+    # Метод Пиявского
+    start_time = time.time()
+    optimizer = GlobalOptimizer(
+        func_str=func_str,
+        a=bounds[0],
+        b=bounds[1],
+        eps=0.01
+    )
+    best_x, best_f, _, _ = optimizer.pijavsky_method()
+    pijavsky_time = time.time() - start_time
+
+    results['Метод Пиявского'] = (best_x, best_f)
+    times['Метод Пиявского'] = pijavsky_time
+
+    # Другие методы
+    for method_name, method_func in methods.items():
+        try:
+            start_time = time.time()
+            result = method_func()
+            execution_time = time.time() - start_time
+
+            if hasattr(result, 'x'):
+                x_opt = result.x[0] if isinstance(result.x, np.ndarray) else result.x
+                f_opt = result.fun
+            else:
+                x_opt = result['x'][0]
+                f_opt = result['fun']
+
+            results[method_name] = (x_opt, f_opt)
+            times[method_name] = execution_time
+
+        except Exception as e:
+            print(f"Ошибка в методе {method_name}: {e}")
+            results[method_name] = (np.nan, np.nan)
+            times[method_name] = np.nan
+
+    # Вывод результатов
+    print(f"{'Метод':<25} {'x_min':<12} {'f_min':<12} {'Время (с)':<10}")
+    print("-" * 60)
+    for method in results:
+        x, f = results[method]
+        t = times[method]
+        if not np.isnan(x):
+            print(f"{method:<25} {x:<12.6f} {f:<12.6f} {t:<10.4f}")
+        else:
+            print(f"{method:<25} {'Ошибка':<12} {'Ошибка':<12} {'Ошибка':<10}")
+
+    return results, times
+
+
+def main():
+    """Главная функция программы"""
+    print("ГЛОБАЛЬНАЯ ОПТИМИЗАЦИЯ МЕТОДОМ ПИЯВСКОГО")
+    print("=" * 50)
+
+    while True:
+        print("\nВыберите режим работы:")
+        print("1 - Демонстрация на тестовых функциях")
+        print("2 - Сравнение методов оптимизации")
+        print("3 - Ввод своей функции")
+        print("0 - Выход")
+
+        choice = input("\nВаш выбор: ").strip()
+
+        if choice == '1':
+            demonstrate_optimization()
+
+        elif choice == '2':
+            test_cases = test_functions()
+            for i, test in enumerate(test_cases[:2]):  # Сравниваем только первые 2 функции
+                compare_methods(test['func'], test['interval'], test['name'])
+
+        elif choice == '3':
+            func_str = input("Введите функцию f(x) (используйте x как переменную): ").strip()
+            a = float(input("Введите левую границу интервала: "))
+            b = float(input("Введите правую границу интервала: "))
+            eps = float(input("Введите точность (по умолчанию 0.01): ") or "0.01")
+
+            optimizer = GlobalOptimizer(func_str, a, b, eps)
+            best_x, best_f, points, f_values = optimizer.pijavsky_method()
+
+            print(f"\nРЕЗУЛЬТАТЫ:")
+            print(f"Найденный аргумент минимума: {best_x:.6f}")
+            print(f"Найденное минимальное значение: {best_f:.6f}")
+            print(f"Количество итераций: {optimizer.iteration_count}")
+            print(f"Затраченное время: {optimizer.execution_time:.4f} секунд")
+
+            # Строим графики
+            fig = optimizer.plot_results(points, f_values, best_x, best_f)
+            plt.show()
+
+        elif choice == '0':
+            print("Выход из программы.")
+            break
+        else:
+            print("Неверный выбор. Попробуйте снова.")
+
+
 if __name__ == "__main__":
-    demonstrate_optimization()
+    main()
